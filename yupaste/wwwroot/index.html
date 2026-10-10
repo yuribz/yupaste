@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>yupaste</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #f5f5f5;
+    --fg: #1a1a1a;
+    --panel: #ffffff;
+    --border: #d0d0d0;
+    --accent: #2563eb;
+    --accent-fg: #ffffff;
+    --muted: #666666;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #121212;
+      --fg: #e8e8e8;
+      --panel: #1c1c1c;
+      --border: #333333;
+      --accent: #3b82f6;
+      --accent-fg: #ffffff;
+      --muted: #999999;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--fg);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    min-height: 100vh;
+    padding: 24px 16px;
+  }
+  .wrap {
+    width: 100%;
+    max-width: 800px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  h1 {
+    margin: 0;
+    font-size: 1.4rem;
+    letter-spacing: -0.02em;
+  }
+  textarea {
+    width: 100%;
+    min-height: 50vh;
+    resize: vertical;
+    background: var(--panel);
+    color: var(--fg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 0.95rem;
+    line-height: 1.4;
+  }
+  .row {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+  button {
+    background: var(--accent);
+    color: var(--accent-fg);
+    border: none;
+    border-radius: 6px;
+    padding: 10px 18px;
+    font-size: 0.95rem;
+    cursor: pointer;
+  }
+  button:active { opacity: 0.85; }
+  button.secondary {
+    background: transparent;
+    color: var(--fg);
+    border: 1px solid var(--border);
+  }
+  #status {
+    font-size: 0.85rem;
+    color: var(--muted);
+    min-height: 1.2em;
+  }
+  .share {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 8px 10px;
+  }
+  .share span.label {
+    font-size: 0.85rem;
+    color: var(--muted);
+    white-space: nowrap;
+  }
+  .share input {
+    flex: 1;
+    min-width: 0;
+    background: transparent;
+    color: var(--fg);
+    border: none;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 0.95rem;
+  }
+  .share input:focus { outline: none; }
+  .share button {
+    padding: 6px 14px;
+    font-size: 0.85rem;
+  }
+  select#urlPicker {
+    background: var(--panel);
+    color: var(--fg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 4px;
+    font-size: 0.8rem;
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>yupaste</h1>
+  <div class="share" id="shareBox" hidden>
+    <span class="label">Share:</span>
+    <input id="shareUrl" type="text" readonly />
+    <select id="urlPicker" hidden></select>
+    <button id="copyUrl" class="secondary">Copy link</button>
+  </div>
+  <textarea id="box" placeholder="Type or paste text here..." spellcheck="false"></textarea>
+  <div class="row">
+    <button id="upload">Upload</button>
+    <button id="copy" class="secondary">Copy to clipboard</button>
+    <span id="status"></span>
+  </div>
+</div>
+<script>
+  const box = document.getElementById('box');
+  const statusEl = document.getElementById('status');
+  const uploadBtn = document.getElementById('upload');
+  const copyBtn = document.getElementById('copy');
+  const shareBox = document.getElementById('shareBox');
+  const shareUrlInput = document.getElementById('shareUrl');
+  const urlPicker = document.getElementById('urlPicker');
+  const copyUrlBtn = document.getElementById('copyUrl');
+
+  let knownVersion = -1;
+  let editing = false;
+
+  async function loadShareUrl() {
+    try {
+      const res = await fetch('/api/info', { cache: 'no-store' });
+      if (!res.ok) throw new Error(res.status);
+      const data = await res.json();
+      if (!data.urls || data.urls.length === 0) return;
+
+      shareUrlInput.value = data.urls[0];
+      shareBox.hidden = false;
+
+      if (data.urls.length > 1) {
+        urlPicker.innerHTML = '';
+        for (const url of data.urls) {
+          const opt = document.createElement('option');
+          opt.value = url;
+          opt.textContent = url;
+          urlPicker.appendChild(opt);
+        }
+        urlPicker.hidden = false;
+        urlPicker.addEventListener('change', () => {
+          shareUrlInput.value = urlPicker.value;
+        });
+      }
+    } catch (err) {
+      // No LAN address detected; leave the share box hidden.
+    }
+  }
+
+  async function copyShareUrl() {
+    try {
+      await navigator.clipboard.writeText(shareUrlInput.value);
+      setStatus('Link copied to clipboard');
+    } catch (err) {
+      shareUrlInput.select();
+      document.execCommand('copy');
+      setStatus('Link copied to clipboard');
+    }
+    setTimeout(() => setStatus(''), 1500);
+  }
+
+  box.addEventListener('focus', () => { editing = true; });
+  box.addEventListener('blur', () => { editing = false; });
+
+  function setStatus(text) {
+    statusEl.textContent = text;
+  }
+
+  async function refresh() {
+    try {
+      const res = await fetch('/api/paste', { cache: 'no-store' });
+      if (!res.ok) throw new Error(res.status);
+      const data = await res.json();
+      if (data.version !== knownVersion) {
+        knownVersion = data.version;
+        if (!editing) {
+          box.value = data.content;
+        }
+      }
+    } catch (err) {
+      setStatus('Connection lost, retrying...');
+    }
+  }
+
+  async function upload() {
+    try {
+      const res = await fetch('/api/paste', {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain' },
+        body: box.value,
+      });
+      if (!res.ok) throw new Error(res.status);
+      const data = await res.json();
+      knownVersion = data.version;
+      setStatus('Uploaded');
+      setTimeout(() => setStatus(''), 1500);
+    } catch (err) {
+      setStatus('Upload failed');
+    }
+  }
+
+  async function copyToClipboard() {
+    try {
+      await navigator.clipboard.writeText(box.value);
+      setStatus('Copied to clipboard');
+    } catch (err) {
+      box.select();
+      document.execCommand('copy');
+      setStatus('Copied to clipboard');
+    }
+    setTimeout(() => setStatus(''), 1500);
+  }
+
+  uploadBtn.addEventListener('click', upload);
+  copyBtn.addEventListener('click', copyToClipboard);
+  copyUrlBtn.addEventListener('click', copyShareUrl);
+
+  refresh();
+  setInterval(refresh, 1000);
+  loadShareUrl();
+</script>
+</body>
+</html>
