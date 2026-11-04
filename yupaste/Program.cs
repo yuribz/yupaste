@@ -1,3 +1,5 @@
+using System.IO.Compression;
+using Microsoft.AspNetCore.Http.Features;
 using Microsoft.Extensions.FileProviders;
 using Yupaste;
 
@@ -8,6 +10,7 @@ if (startupOptions is null) return exitCode;
 
 var app = BuildApp(startupOptions, MaxPasteBytes);
 MapPasteEndpoints(app, startupOptions);
+MapFileEndpoints(app);
 PrintStartupBanner(startupOptions);
 
 app.Run($"http://{startupOptions.Host}:{startupOptions.Port}");
@@ -67,6 +70,7 @@ static WebApplication BuildApp(StartupOptions options, long maxPasteBytes)
     builder.Logging.SetMinimumLevel(LogLevel.Warning);
     builder.WebHost.ConfigureKestrel(o => o.Limits.MaxRequestBodySize = maxPasteBytes);
     builder.Services.AddSingleton<PasteStore>();
+    builder.Services.AddSingleton<FileStore>();
 
     var app = builder.Build();
 
@@ -102,6 +106,99 @@ static void MapPasteEndpoints(WebApplication app, StartupOptions options)
             : Results.BadRequest());
 }
 
+static void MapFileEndpoints(WebApplication app)
+{
+    app.MapGet("/api/files", (FileStore store) => Results.Ok(ToFilesResponse(store)));
+
+    // Takes the raw body rather than multipart: form parsing spills uploads to temp files on disk.
+    app.MapPost("/api/files", async (HttpContext context, string name, FileStore store) =>
+    {
+        if (context.Request.ContentLength is not long length) return Results.StatusCode(StatusCodes.Status411LengthRequired);
+        if (!store.TryReserve(length)) return Results.StatusCode(StatusCodes.Status413PayloadTooLarge);
+
+        bool stored = false;
+        try
+        {
+            // The store's limit applies here; the server-wide limit is for the paste endpoint.
+            context.Features.GetRequiredFeature<IHttpMaxRequestBodySizeFeature>().MaxRequestBodySize = length;
+
+            var content = new byte[length];
+            await context.Request.Body.ReadExactlyAsync(content, context.RequestAborted);
+            var file = store.Add(name, content);
+            stored = true;
+            return Results.Ok(new FileEntry(file.Id, file.Name, file.Content.Length));
+        }
+        catch (Exception ex) when (IsClientDisconnect(ex))
+        {
+            return Results.BadRequest();
+        }
+        finally
+        {
+            if (!stored) store.Release(length);
+        }
+    });
+
+    app.MapDelete("/api/files/{id}", (string id, FileStore store) =>
+        store.Remove(id) ? Results.Ok(ToFilesResponse(store)) : Results.NotFound());
+
+    app.MapPut("/api/files/limit", (LimitRequest request, FileStore store) =>
+        store.TrySetLimit(request.Large ? FileStore.LargeLimitBytes : FileStore.DefaultLimitBytes)
+            ? Results.Ok(ToFilesResponse(store))
+            : Results.Conflict(ToFilesResponse(store)));
+
+    app.MapGet("/api/files/download", async (HttpContext context, FileStore store) =>
+    {
+        var files = store.Snapshot().Files;
+        if (files.Count == 0) return Results.NotFound();
+
+        // Always an attachment: an uploaded HTML file must never render on this origin.
+        context.Response.Headers.XContentTypeOptions = "nosniff";
+
+        if (files.Count == 1)
+        {
+            return Results.File(files[0].Content, "application/octet-stream", files[0].Name);
+        }
+
+        await WriteZipAsync(context, files);
+        return Results.Empty;
+    });
+}
+
+// Streams the zip rather than building it in memory first, which would need a second
+// copy of up to the whole store. ZipArchive only writes synchronously on .NET 8.
+static async Task WriteZipAsync(HttpContext context, IReadOnlyList<StoredFile> files)
+{
+    context.Features.GetRequiredFeature<IHttpBodyControlFeature>().AllowSynchronousIO = true;
+    context.Response.ContentType = "application/octet-stream";
+    context.Response.Headers.ContentDisposition = "attachment; filename=\"yupaste-files.zip\"";
+
+    try
+    {
+        await Task.Run(() =>
+        {
+            using var zip = new ZipArchive(context.Response.Body, ZipArchiveMode.Create, leaveOpen: true);
+            foreach (var file in files)
+            {
+                using var entry = zip.CreateEntry(file.Name, CompressionLevel.NoCompression).Open();
+                entry.Write(file.Content);
+            }
+        }, context.RequestAborted);
+    }
+    catch (Exception ex) when (IsClientDisconnect(ex))
+    {
+        context.Abort();
+    }
+}
+
+static bool IsClientDisconnect(Exception ex) => ex is IOException or OperationCanceledException;
+
+static FilesResponse ToFilesResponse(FileStore store)
+{
+    var (files, usedBytes, limitBytes) = store.Snapshot();
+    var entries = files.Select(f => new FileEntry(f.Id, f.Name, f.Content.Length)).ToList();
+    return new FilesResponse(entries, usedBytes, limitBytes);
+}
+
 static void PrintStartupBanner(StartupOptions options)
 {
     Console.WriteLine($"yupaste listening on http://{options.Host}:{options.Port}/");
@@ -126,3 +223,6 @@ static List<string> GetShareUrls(int port) =>
     NetworkHelper.GetLanIPv4Addresses().Select(ip => $"http://{ip}:{port}/").ToList();
 
 record PasteResponse(string Content, long Version);
+record FileEntry(string Id, string Name, long Size);
+record FilesResponse(List<FileEntry> Files, long UsedBytes, long LimitBytes);
+record LimitRequest(bool Large);

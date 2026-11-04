@@ -4,6 +4,10 @@ A tiny shared-clipboard pastebin for moving text between devices on the same net
 One text box, shared by everyone connected: hit **Upload** to push your edits to all
 other viewers, or **Copy to clipboard** to grab the current contents.
 
+It can also host files: drop them on the page and anyone connected can download
+them. One file downloads as-is; several download together as a zip. Files share a
+64 MB limit, shown by the gauge on the page, and **Allow 128 MB** raises it.
+
 ## Build
 
 Requires the [.NET 8 SDK](https://dotnet.microsoft.com/download).
@@ -39,7 +43,8 @@ The port can also be set via the `YUPASTE_PORT` environment variable.
 
 ## Notes
 
-- State is in-memory only — restarting the process clears the shared text.
-- There's no auth; anyone who can reach the port can read/write the paste.
+- State is in-memory only — restarting the process clears the shared text and files.
+- There's no auth; anyone who can reach the port can read/write the paste, and
+  upload, download or remove files.
   Only run it on networks you trust (e.g. your LAN), or put it behind a
   reverse proxy / firewall if exposing it further.

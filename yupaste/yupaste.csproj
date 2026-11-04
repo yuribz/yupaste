@@ -8,6 +8,7 @@
     <RootNamespace>Yupaste</RootNamespace>
     <InvariantGlobalization>true</InvariantGlobalization>
     <GenerateEmbeddedFilesManifest>true</GenerateEmbeddedFilesManifest>
+    <ServerGarbageCollection>false</ServerGarbageCollection>
   </PropertyGroup>
 
   <ItemGroup>
