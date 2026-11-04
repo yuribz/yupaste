@@ -20,6 +20,7 @@ static StartupOptions? ParseStartupOptions(string[] args, out int exitCode)
 {
     int port = StartupOptions.DefaultPort;
     string host = "0.0.0.0";
+    int idleTimeoutMinutes = StartupOptions.DefaultIdleTimeoutMinutes;
 
     for (int i = 0; i < args.Length; i++)
     {
@@ -36,6 +37,14 @@ static StartupOptions? ParseStartupOptions(string[] args, out int exitCode)
             case "--host" when i < args.Length - 1:
                 host = args[++i];
                 break;
+            case "--idle-timeout" when i < args.Length - 1:
+                if (!int.TryParse(args[++i], out idleTimeoutMinutes) || idleTimeoutMinutes < 0)
+                {
+                    Console.Error.WriteLine($"Invalid idle timeout: {args[i]}");
+                    exitCode = 1;
+                    return null;
+                }
+                break;
             case "--help" or "-h":
                 PrintUsage();
                 exitCode = 0;
@@ -50,14 +59,15 @@ static StartupOptions? ParseStartupOptions(string[] args, out int exitCode)
     }
 
     exitCode = 0;
-    return new StartupOptions(host, port);
+    return new StartupOptions(host, port, idleTimeoutMinutes);
 }
 
 static void PrintUsage()
 {
-    Console.WriteLine("Usage: yupaste [--port <port>] [--host <address>]");
-    Console.WriteLine($"  --port   Port to listen on (default: {StartupOptions.DefaultPort})");
-    Console.WriteLine("  --host   Address to bind to (default: 0.0.0.0, all interfaces)");
+    Console.WriteLine("Usage: yupaste [--port <port>] [--host <address>] [--idle-timeout <minutes>]");
+    Console.WriteLine($"  --port          Port to listen on (default: {StartupOptions.DefaultPort})");
+    Console.WriteLine("  --host          Address to bind to (default: 0.0.0.0, all interfaces)");
+    Console.WriteLine($"  --idle-timeout  Minutes without activity before shutting down, 0 to never (default: {StartupOptions.DefaultIdleTimeoutMinutes})");
 }
 
 static WebApplication BuildApp(StartupOptions options, long maxPasteBytes)
@@ -71,8 +81,31 @@ static WebApplication BuildApp(StartupOptions options, long maxPasteBytes)
     builder.WebHost.ConfigureKestrel(o => o.Limits.MaxRequestBodySize = maxPasteBytes);
     builder.Services.AddSingleton<PasteStore>();
     builder.Services.AddSingleton<FileStore>();
+    builder.Services.AddSingleton(options);
+    builder.Services.AddSingleton<ActivityTracker>();
+    builder.Services.AddHostedService<IdleShutdownService>();
 
     var app = builder.Build();
+
+    var activity = app.Services.GetRequiredService<ActivityTracker>();
+    app.Use(async (context, next) =>
+    {
+        if (IsPassivePoll(context.Request))
+        {
+            await next();
+            return;
+        }
+
+        activity.RequestStarted();
+        try
+        {
+            await next();
+        }
+        finally
+        {
+            activity.RequestEnded();
+        }
+    });
 
     var webAssets = new ManifestEmbeddedFileProvider(typeof(Program).Assembly, "wwwroot");
     app.UseDefaultFiles(new DefaultFilesOptions { FileProvider = webAssets });
@@ -80,6 +113,11 @@ static WebApplication BuildApp(StartupOptions options, long maxPasteBytes)
 
     return app;
 }
+
+// The page polls these every second, so counting them would let a forgotten tab
+// keep the server alive forever.
+static bool IsPassivePoll(HttpRequest request) =>
+    HttpMethods.IsGet(request.Method) && (request.Path == "/api/paste" || request.Path == "/api/files");
 
 static void MapPasteEndpoints(WebApplication app, StartupOptions options)
 {
@@ -108,7 +146,7 @@ static void MapPasteEndpoints(WebApplication app, StartupOptions options)
 
 static void MapFileEndpoints(WebApplication app)
 {
-    app.MapGet("/api/files", (FileStore store) => Results.Ok(ToFilesResponse(store)));
+    app.MapGet("/api/files", (FileStore store, ActivityTracker activity) => Results.Ok(ToFilesResponse(store, activity)));
 
     // Takes the raw body rather than multipart: form parsing spills uploads to temp files on disk.
     app.MapPost("/api/files", async (HttpContext context, string name, FileStore store) =>
@@ -138,13 +176,13 @@ static void MapFileEndpoints(WebApplication app)
         }
     });
 
-    app.MapDelete("/api/files/{id}", (string id, FileStore store) =>
-        store.Remove(id) ? Results.Ok(ToFilesResponse(store)) : Results.NotFound());
+    app.MapDelete("/api/files/{id}", (string id, FileStore store, ActivityTracker activity) =>
+        store.Remove(id) ? Results.Ok(ToFilesResponse(store, activity)) : Results.NotFound());
 
-    app.MapPut("/api/files/limit", (LimitRequest request, FileStore store) =>
+    app.MapPut("/api/files/limit", (LimitRequest request, FileStore store, ActivityTracker activity) =>
         store.TrySetLimit(request.Large ? FileStore.LargeLimitBytes : FileStore.DefaultLimitBytes)
-            ? Results.Ok(ToFilesResponse(store))
-            : Results.Conflict(ToFilesResponse(store)));
+            ? Results.Ok(ToFilesResponse(store, activity))
+            : Results.Conflict(ToFilesResponse(store, activity)));
 
     app.MapGet("/api/files/download", async (HttpContext context, FileStore store) =>
     {
@@ -192,11 +230,11 @@ static async Task WriteZipAsync(HttpContext context, IReadOnlyList<StoredFile> f
 
 static bool IsClientDisconnect(Exception ex) => ex is IOException or OperationCanceledException;
 
-static FilesResponse ToFilesResponse(FileStore store)
+static FilesResponse ToFilesResponse(FileStore store, ActivityTracker activity)
 {
     var (files, usedBytes, limitBytes) = store.Snapshot();
     var entries = files.Select(f => new FileEntry(f.Id, f.Name, f.Content.Length)).ToList();
-    return new FilesResponse(entries, usedBytes, limitBytes);
+    return new FilesResponse(entries, usedBytes, limitBytes, activity.SecondsUntilShutdown());
 }
 
 static void PrintStartupBanner(StartupOptions options)
@@ -217,6 +255,10 @@ static void PrintStartupBanner(StartupOptions options)
     {
         Console.WriteLine("No LAN network interface detected — only localhost can connect.");
     }
+
+    Console.WriteLine(options.IdleTimeoutMinutes > 0
+        ? $"Shuts down after {options.IdleTimeoutMinutes} min without activity. An open tab doesn't count."
+        : "Idle shutdown is off.");
 }
 
 static List<string> GetShareUrls(int port) =>
@@ -224,5 +266,5 @@ static List<string> GetShareUrls(int port) =>
 
 record PasteResponse(string Content, long Version);
 record FileEntry(string Id, string Name, long Size);
-record FilesResponse(List<FileEntry> Files, long UsedBytes, long LimitBytes);
+record FilesResponse(List<FileEntry> Files, long UsedBytes, long LimitBytes, int? ShutdownInSeconds);
 record LimitRequest(bool Large);

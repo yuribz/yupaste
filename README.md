@@ -38,11 +38,16 @@ Options:
 
 - `--port <n>` — port to listen on (default `5005`)
 - `--host <addr>` — address to bind to (default `0.0.0.0`, all interfaces)
+- `--idle-timeout <minutes>` — shut down after this long without activity
+  (default `15`, `0` to never shut down)
 
 The port can also be set via the `YUPASTE_PORT` environment variable.
 
 ## Notes
 
+- Page loads, uploads, downloads and other changes count as activity, and the
+  timer doesn't run during a transfer. A tab that's merely open doesn't count, and
+  neither does typing before you hit **Upload**. The page shows a countdown.
 - State is in-memory only — restarting the process clears the shared text and files.
 - There's no auth; anyone who can reach the port can read/write the paste, and
   upload, download or remove files.

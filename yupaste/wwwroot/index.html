@@ -130,6 +130,10 @@
     padding: 4px;
     font-size: 0.8rem;
   }
+  #shutdownNotice {
+    font-size: 0.8rem;
+    color: var(--muted);
+  }
   #qrPanel {
     display: flex;
     justify-content: center;
@@ -241,6 +245,7 @@
 <body>
 <div class="wrap">
   <h1>yupaste</h1>
+  <div id="shutdownNotice" hidden></div>
   <div class="share" id="shareBox" hidden>
     <span class="label">Share:</span>
     <input id="shareUrl" type="text" readonly />
@@ -298,6 +303,7 @@
   const fileStatus = document.getElementById('fileStatus');
   const fileList = document.getElementById('fileList');
   const downloadFiles = document.getElementById('downloadFiles');
+  const shutdownNotice = document.getElementById('shutdownNotice');
 
   const DEFAULT_LIMIT_BYTES = 64 * 1024 * 1024;
   const LARGE_LIMIT_BYTES = 128 * 1024 * 1024;
@@ -307,6 +313,7 @@
   let editing = false;
   let filesState = { files: [], usedBytes: 0, limitBytes: DEFAULT_LIMIT_BYTES };
   let renderedFileIds = '';
+  let connectionLost = false;
 
   async function loadShareUrl() {
     try {
@@ -378,8 +385,14 @@
           box.value = data.content;
         }
       }
+      if (connectionLost) {
+        connectionLost = false;
+        setStatus('');
+      }
     } catch (err) {
-      setStatus('Connection lost, retrying...');
+      connectionLost = true;
+      shutdownNotice.hidden = true;
+      setStatus('Connection lost. The server may have shut down after being idle. Retrying...');
     }
   }
 
@@ -418,8 +431,18 @@
     return (bytes / (1024 * 1024)).toFixed(1).replace(/\.0$/, '') + ' MB';
   }
 
+  function renderShutdownNotice(seconds) {
+    shutdownNotice.hidden = seconds === null;
+    if (seconds === null) return;
+
+    const minutes = String(Math.floor(seconds / 60)).padStart(2, '0');
+    const rest = String(seconds % 60).padStart(2, '0');
+    shutdownNotice.textContent = 'Auto-shutdown in ' + minutes + ':' + rest + ' if idle. Text and files will be lost.';
+  }
+
   function renderFiles(state) {
     filesState = state;
+    renderShutdownNotice(state.shutdownInSeconds);
 
     const ratio = state.usedBytes / state.limitBytes;
     gaugeBar.value = ratio;
