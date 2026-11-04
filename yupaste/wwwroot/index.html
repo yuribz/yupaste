@@ -14,6 +14,7 @@
     --accent: #2563eb;
     --accent-fg: #ffffff;
     --muted: #666666;
+    --warn: #c2410c;
   }
   @media (prefers-color-scheme: dark) {
     :root {
@@ -24,9 +25,11 @@
       --accent: #3b82f6;
       --accent-fg: #ffffff;
       --muted: #999999;
+      --warn: #fb923c;
     }
   }
   * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
   body {
     margin: 0;
     background: var(--bg);
@@ -52,7 +55,7 @@
   }
   textarea {
     width: 100%;
-    min-height: 50vh;
+    min-height: 35vh;
     resize: vertical;
     background: var(--panel);
     color: var(--fg);
@@ -69,7 +72,7 @@
     align-items: center;
     flex-wrap: wrap;
   }
-  button {
+  button, a.button {
     background: var(--accent);
     color: var(--accent-fg);
     border: none;
@@ -77,8 +80,9 @@
     padding: 10px 18px;
     font-size: 0.95rem;
     cursor: pointer;
+    text-decoration: none;
   }
-  button:active { opacity: 0.85; }
+  button:active, a.button:active { opacity: 0.85; }
   button.secondary {
     background: transparent;
     color: var(--fg);
@@ -91,6 +95,7 @@
   }
   .share {
     display: flex;
+    flex-wrap: wrap;
     gap: 8px;
     align-items: center;
     background: var(--panel);
@@ -105,7 +110,7 @@
   }
   .share input {
     flex: 1;
-    min-width: 0;
+    min-width: 12rem;
     background: transparent;
     color: var(--fg);
     border: none;
@@ -125,16 +130,131 @@
     padding: 4px;
     font-size: 0.8rem;
   }
+  #shutdownNotice {
+    font-size: 0.8rem;
+    color: var(--muted);
+  }
+  #qrPanel {
+    display: flex;
+    justify-content: center;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px;
+  }
+  #qrImage {
+    width: min(100%, 260px);
+    height: auto;
+    border-radius: 4px;
+  }
+  .files {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px;
+  }
+  .files h2 {
+    margin: 0;
+    font-size: 1rem;
+  }
+  .files-head {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 12px;
+    align-items: baseline;
+    justify-content: space-between;
+  }
+  .files-head label {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+    font-size: 0.85rem;
+  }
+  .gauge {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    font-size: 0.85rem;
+    color: var(--muted);
+  }
+  .gauge progress {
+    width: 100%;
+    height: 10px;
+    accent-color: var(--accent);
+  }
+  .gauge.full progress { accent-color: var(--warn); }
+  .gauge.full { color: var(--warn); }
+  .drop {
+    display: block;
+    border: 1px dashed var(--border);
+    border-radius: 6px;
+    padding: 16px;
+    text-align: center;
+    font-size: 0.9rem;
+    color: var(--muted);
+    cursor: pointer;
+  }
+  .drop.over, .drop:focus-within {
+    border-color: var(--accent);
+    color: var(--fg);
+  }
+  .visually-hidden {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    opacity: 0;
+  }
+  #fileList {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+  }
+  #fileList li {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    padding: 6px 0;
+    border-top: 1px solid var(--border);
+  }
+  #fileList .name {
+    flex: 1;
+    min-width: 0;
+    overflow-wrap: anywhere;
+    font-size: 0.9rem;
+  }
+  #fileList .size {
+    font-size: 0.8rem;
+    color: var(--muted);
+    white-space: nowrap;
+  }
+  #fileList button {
+    padding: 4px 10px;
+    font-size: 0.8rem;
+  }
+  #fileStatus {
+    font-size: 0.85rem;
+    color: var(--muted);
+    overflow-wrap: anywhere;
+  }
 </style>
 </head>
 <body>
 <div class="wrap">
   <h1>yupaste</h1>
+  <div id="shutdownNotice" hidden></div>
   <div class="share" id="shareBox" hidden>
     <span class="label">Share:</span>
     <input id="shareUrl" type="text" readonly />
     <select id="urlPicker" hidden></select>
     <button id="copyUrl" class="secondary">Copy link</button>
+    <button id="toggleQr" class="secondary" aria-expanded="false" aria-controls="qrPanel">QR</button>
+  </div>
+  <div id="qrPanel" hidden>
+    <img id="qrImage" alt="QR code for the share link" />
   </div>
   <textarea id="box" placeholder="Type or paste text here..." spellcheck="false"></textarea>
   <div class="row">
@@ -142,6 +262,25 @@
     <button id="copy" class="secondary">Copy to clipboard</button>
     <span id="status"></span>
   </div>
+  <section class="files" aria-labelledby="filesHeading">
+    <div class="files-head">
+      <h2 id="filesHeading">Files</h2>
+      <label><input id="allowLarge" type="checkbox" /> Allow 128 MB</label>
+    </div>
+    <div class="gauge" id="gauge">
+      <span id="gaugeText"></span>
+      <progress id="gaugeBar" max="1" value="0" aria-labelledby="gaugeText"></progress>
+    </div>
+    <label class="drop" id="dropZone">
+      <input id="filePicker" class="visually-hidden" type="file" multiple />
+      Drop files here, or tap to choose
+    </label>
+    <div id="fileStatus" role="status"></div>
+    <ul id="fileList"></ul>
+    <div class="row">
+      <a id="downloadFiles" class="button" href="/api/files/download" hidden>Download</a>
+    </div>
+  </section>
 </div>
 <script>
   const box = document.getElementById('box');
@@ -152,9 +291,29 @@
   const shareUrlInput = document.getElementById('shareUrl');
   const urlPicker = document.getElementById('urlPicker');
   const copyUrlBtn = document.getElementById('copyUrl');
+  const toggleQrBtn = document.getElementById('toggleQr');
+  const qrPanel = document.getElementById('qrPanel');
+  const qrImage = document.getElementById('qrImage');
+  const allowLarge = document.getElementById('allowLarge');
+  const gauge = document.getElementById('gauge');
+  const gaugeText = document.getElementById('gaugeText');
+  const gaugeBar = document.getElementById('gaugeBar');
+  const dropZone = document.getElementById('dropZone');
+  const filePicker = document.getElementById('filePicker');
+  const fileStatus = document.getElementById('fileStatus');
+  const fileList = document.getElementById('fileList');
+  const downloadFiles = document.getElementById('downloadFiles');
+  const shutdownNotice = document.getElementById('shutdownNotice');
+
+  const DEFAULT_LIMIT_BYTES = 64 * 1024 * 1024;
+  const LARGE_LIMIT_BYTES = 128 * 1024 * 1024;
+  const GAUGE_FULL_RATIO = 0.9;
 
   let knownVersion = -1;
   let editing = false;
+  let filesState = { files: [], usedBytes: 0, limitBytes: DEFAULT_LIMIT_BYTES };
+  let renderedFileIds = '';
+  let connectionLost = false;
 
   async function loadShareUrl() {
     try {
@@ -177,11 +336,23 @@
         urlPicker.hidden = false;
         urlPicker.addEventListener('change', () => {
           shareUrlInput.value = urlPicker.value;
+          updateQr();
         });
       }
     } catch (err) {
       // No LAN address detected; leave the share box hidden.
     }
+  }
+
+  function updateQr() {
+    if (qrPanel.hidden) return;
+    qrImage.src = '/api/qr?url=' + encodeURIComponent(shareUrlInput.value);
+  }
+
+  function toggleQr() {
+    qrPanel.hidden = !qrPanel.hidden;
+    toggleQrBtn.setAttribute('aria-expanded', String(!qrPanel.hidden));
+    updateQr();
   }
 
   async function copyShareUrl() {
@@ -214,8 +385,14 @@
           box.value = data.content;
         }
       }
+      if (connectionLost) {
+        connectionLost = false;
+        setStatus('');
+      }
     } catch (err) {
-      setStatus('Connection lost, retrying...');
+      connectionLost = true;
+      shutdownNotice.hidden = true;
+      setStatus('Connection lost. The server may have shut down after being idle. Retrying...');
     }
   }
 
@@ -248,12 +425,155 @@
     setTimeout(() => setStatus(''), 1500);
   }
 
+  function formatBytes(bytes) {
+    if (bytes < 1024) return bytes + ' B';
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+    return (bytes / (1024 * 1024)).toFixed(1).replace(/\.0$/, '') + ' MB';
+  }
+
+  function renderShutdownNotice(seconds) {
+    shutdownNotice.hidden = seconds === null;
+    if (seconds === null) return;
+
+    const minutes = String(Math.floor(seconds / 60)).padStart(2, '0');
+    const rest = String(seconds % 60).padStart(2, '0');
+    shutdownNotice.textContent = 'Auto-shutdown in ' + minutes + ':' + rest + ' if idle. Text and files will be lost.';
+  }
+
+  function renderFiles(state) {
+    filesState = state;
+    renderShutdownNotice(state.shutdownInSeconds);
+
+    const ratio = state.usedBytes / state.limitBytes;
+    gaugeBar.value = ratio;
+    gaugeText.textContent = formatBytes(state.usedBytes) + ' of ' + formatBytes(state.limitBytes) + ' used';
+    gauge.classList.toggle('full', ratio >= GAUGE_FULL_RATIO);
+    allowLarge.checked = state.limitBytes === LARGE_LIMIT_BYTES;
+
+    downloadFiles.hidden = state.files.length === 0;
+    downloadFiles.textContent = state.files.length > 1 ? 'Download all (.zip)' : 'Download';
+
+    // Rebuilt only on change, so polling doesn't drop focus from a Remove button.
+    const fileIds = state.files.map((file) => file.id).join();
+    if (fileIds === renderedFileIds) return;
+    renderedFileIds = fileIds;
+
+    fileList.replaceChildren(...state.files.map((file) => {
+      const name = document.createElement('span');
+      name.className = 'name';
+      name.textContent = file.name;
+
+      const size = document.createElement('span');
+      size.className = 'size';
+      size.textContent = formatBytes(file.size);
+
+      const remove = document.createElement('button');
+      remove.className = 'secondary';
+      remove.textContent = 'Remove';
+      remove.setAttribute('aria-label', 'Remove ' + file.name);
+      remove.addEventListener('click', () => removeFile(file.id));
+
+      const item = document.createElement('li');
+      item.append(name, size, remove);
+      return item;
+    }));
+  }
+
+  async function refreshFiles() {
+    try {
+      const res = await fetch('/api/files', { cache: 'no-store' });
+      if (!res.ok) throw new Error(res.status);
+      renderFiles(await res.json());
+    } catch (err) {
+      // refresh() already reports lost connections.
+    }
+  }
+
+  function uploadFile(file) {
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', '/api/files?name=' + encodeURIComponent(file.name));
+      xhr.setRequestHeader('Content-Type', 'application/octet-stream');
+      xhr.upload.addEventListener('progress', (event) => {
+        const percent = Math.floor(event.loaded / event.total * 100);
+        fileStatus.textContent = 'Uploading ' + file.name + ': ' + percent + '%';
+      });
+      xhr.addEventListener('load', () => (xhr.status === 200 ? resolve() : reject(new Error(xhr.status))));
+      xhr.addEventListener('error', () => reject(new Error('network')));
+      xhr.send(file);
+    });
+  }
+
+  async function uploadFiles(files) {
+    const problems = [];
+    for (const file of files) {
+      if (file.size > filesState.limitBytes - filesState.usedBytes) {
+        problems.push(file.name + " doesn't fit");
+        continue;
+      }
+      try {
+        await uploadFile(file);
+      } catch (err) {
+        problems.push(file.name + ' failed to upload');
+      }
+      await refreshFiles();
+    }
+    fileStatus.textContent = problems.join('; ');
+  }
+
+  async function removeFile(id) {
+    const res = await fetch('/api/files/' + id, { method: 'DELETE' }).catch(() => null);
+    if (res && res.ok) renderFiles(await res.json());
+  }
+
+  async function setLargeLimit() {
+    try {
+      const res = await fetch('/api/files/limit', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ large: allowLarge.checked }),
+      });
+      if (res.status === 409) {
+        fileStatus.textContent = 'Remove files until 64 MB or less is used, then try again.';
+      } else if (!res.ok) {
+        throw new Error(res.status);
+      } else {
+        fileStatus.textContent = '';
+      }
+      renderFiles(await res.json());
+    } catch (err) {
+      allowLarge.checked = filesState.limitBytes === LARGE_LIMIT_BYTES;
+      fileStatus.textContent = "Couldn't change the limit";
+    }
+  }
+
+  filePicker.addEventListener('change', () => {
+    uploadFiles([...filePicker.files]);
+    filePicker.value = '';
+  });
+  dropZone.addEventListener('dragover', (event) => {
+    event.preventDefault();
+    dropZone.classList.add('over');
+  });
+  dropZone.addEventListener('dragleave', () => dropZone.classList.remove('over'));
+  dropZone.addEventListener('drop', (event) => {
+    event.preventDefault();
+    dropZone.classList.remove('over');
+    uploadFiles([...event.dataTransfer.files]);
+  });
+  allowLarge.addEventListener('change', setLargeLimit);
+
   uploadBtn.addEventListener('click', upload);
   copyBtn.addEventListener('click', copyToClipboard);
   copyUrlBtn.addEventListener('click', copyShareUrl);
+  toggleQrBtn.addEventListener('click', toggleQr);
 
   refresh();
-  setInterval(refresh, 1000);
+  refreshFiles();
+  setInterval(() => {
+    refresh();
+    refreshFiles();
+  }, 1000);
   loadShareUrl();
 </script>
 </body>
