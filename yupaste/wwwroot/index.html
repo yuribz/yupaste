@@ -27,6 +27,7 @@
     }
   }
   * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
   body {
     margin: 0;
     background: var(--bg);
@@ -91,6 +92,7 @@
   }
   .share {
     display: flex;
+    flex-wrap: wrap;
     gap: 8px;
     align-items: center;
     background: var(--panel);
@@ -105,7 +107,7 @@
   }
   .share input {
     flex: 1;
-    min-width: 0;
+    min-width: 12rem;
     background: transparent;
     color: var(--fg);
     border: none;
@@ -125,6 +127,19 @@
     padding: 4px;
     font-size: 0.8rem;
   }
+  #qrPanel {
+    display: flex;
+    justify-content: center;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px;
+  }
+  #qrImage {
+    width: min(100%, 260px);
+    height: auto;
+    border-radius: 4px;
+  }
 </style>
 </head>
 <body>
@@ -135,6 +150,10 @@
     <input id="shareUrl" type="text" readonly />
     <select id="urlPicker" hidden></select>
     <button id="copyUrl" class="secondary">Copy link</button>
+    <button id="toggleQr" class="secondary" aria-expanded="false" aria-controls="qrPanel">QR</button>
+  </div>
+  <div id="qrPanel" hidden>
+    <img id="qrImage" alt="QR code for the share link" />
   </div>
   <textarea id="box" placeholder="Type or paste text here..." spellcheck="false"></textarea>
   <div class="row">
@@ -152,6 +171,9 @@
   const shareUrlInput = document.getElementById('shareUrl');
   const urlPicker = document.getElementById('urlPicker');
   const copyUrlBtn = document.getElementById('copyUrl');
+  const toggleQrBtn = document.getElementById('toggleQr');
+  const qrPanel = document.getElementById('qrPanel');
+  const qrImage = document.getElementById('qrImage');
 
   let knownVersion = -1;
   let editing = false;
@@ -177,11 +199,23 @@
         urlPicker.hidden = false;
         urlPicker.addEventListener('change', () => {
           shareUrlInput.value = urlPicker.value;
+          updateQr();
         });
       }
     } catch (err) {
       // No LAN address detected; leave the share box hidden.
     }
+  }
+
+  function updateQr() {
+    if (qrPanel.hidden) return;
+    qrImage.src = '/api/qr?url=' + encodeURIComponent(shareUrlInput.value);
+  }
+
+  function toggleQr() {
+    qrPanel.hidden = !qrPanel.hidden;
+    toggleQrBtn.setAttribute('aria-expanded', String(!qrPanel.hidden));
+    updateQr();
   }
 
   async function copyShareUrl() {
@@ -251,6 +285,7 @@
   uploadBtn.addEventListener('click', upload);
   copyBtn.addEventListener('click', copyToClipboard);
   copyUrlBtn.addEventListener('click', copyShareUrl);
+  toggleQrBtn.addEventListener('click', toggleQr);
 
   refresh();
   setInterval(refresh, 1000);

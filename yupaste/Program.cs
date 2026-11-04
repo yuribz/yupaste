@@ -94,6 +94,12 @@ static void MapPasteEndpoints(WebApplication app, StartupOptions options)
     });
 
     app.MapGet("/api/info", () => Results.Ok(new { urls = GetShareUrls(options.Port) }));
+
+    // Only encodes this server's own share URLs, so it can't be used as a general QR generator.
+    app.MapGet("/api/qr", (string url) =>
+        GetShareUrls(options.Port).Contains(url)
+            ? Results.Text(QrHelper.ToSvg(url), "image/svg+xml")
+            : Results.BadRequest());
 }
 
 static void PrintStartupBanner(StartupOptions options)
@@ -107,6 +113,7 @@ static void PrintStartupBanner(StartupOptions options)
         foreach (var url in shareUrls)
         {
             Console.WriteLine($"  {url}");
+            Console.WriteLine(QrHelper.ToTerminal(url, useColor: !Console.IsOutputRedirected));
         }
     }
     else

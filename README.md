@@ -27,7 +27,8 @@ publish/yupaste --port 5005
 ```
 
 Then, from any device on the same network, open `http://<host-ip>:5005/` in a
-browser.
+browser. To connect from a phone, scan the QR code printed in the terminal, or
+the one behind the **QR** button on the page.
 
 Options:
 
